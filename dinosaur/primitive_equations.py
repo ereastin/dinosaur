@@ -65,6 +65,8 @@ class State:
   divergence: Array
   temperature_variation: Array
   log_surface_pressure: Array
+  # NOTE(ereastin): personal addition
+#  precip: Array
   tracers: Mapping[str, Array] = dataclasses.field(default_factory=dict)
   sim_time: float | None = None
 
@@ -1038,6 +1040,20 @@ class PrimitiveEquations(time_integration.ImplicitExplicitODE):
     dT_dt_horizontal_nodal, dT_dt_horizontal_modal = horizontal_tendency_fn(
         aux_state.temperature_variation
     )
+
+    ## NOTE(ereastin): MY CHANGES FOR MESSING WITH WATER VAPOR
+    ## really not sure if this should be here..? probably shouldn't be coupled to H-S forcing.?
+    ## or even as a separate thing.? but wouldn't be able to compose those 3 together has to be here or there.?
+    #qsat = self.saturation_specific_humidity(nodal_temperature, nodal_surface_pressure).magnitude
+    # nudge ~BL to saturation over 30 min (Ming & Held) assume time not exactly imp(?)
+    #nodal_sources = qsat.at[:-4, :, :].set(0) / 3  # over 3 time steps it would saturate.?
+    #condense = aux_state.tracers['qv'] - qsat  # ok so have this, how would we keep track of how much is rained out.?
+    #nodal_sinks = jnp.maximum(condense, 0) # calc condensation above sat specific hum
+    #nodal_tendency = nodal_sources - nodal_sinks
+    #qv_tendency = self.coords.horizontal.to_modal(nodal_tendency)
+    #tracers_tendency = {'qv': qv_tendency}
+    ## ENDS HERE!
+
     tracers_horizontal_nodal_and_modal = jax.tree_util.tree_map(
         horizontal_tendency_fn, aux_state.tracers
     )
@@ -1065,6 +1081,9 @@ class PrimitiveEquations(time_integration.ImplicitExplicitODE):
         + dT_dt_horizontal_modal
     )
     log_surface_pressure_tendency = to_modal_fn(log_sp_tendency)
+    # NOTE(it is possible to do conditional lambda funcs..)
+    # NOTE(ereastin): addition for tracking precip.?
+    #precip_tendency = to_modal_fn(jnp.zeros_like(log_sp_tendency))
     tracers_tendency = jax.tree_util.tree_map(
         lambda x, y_z: to_modal_fn(x + y_z[0]) + y_z[1],
         tracers_vertical_nodal,
@@ -1075,6 +1094,7 @@ class PrimitiveEquations(time_integration.ImplicitExplicitODE):
         divergence=divergence_tendency,
         temperature_variation=temperature_tendency,
         log_surface_pressure=log_surface_pressure_tendency,
+     #   precip=precip_tendency,
         tracers=tracers_tendency,
         sim_time=None if state.sim_time is None else 1.0,
     )
@@ -1128,11 +1148,15 @@ class PrimitiveEquations(time_integration.ImplicitExplicitODE):
         self.coords.vertical.layer_thickness[np.newaxis], state.divergence
     )
     tracers_implicit = jax.tree_util.tree_map(jnp.zeros_like, state.tracers)
+    # NOTE(ereastin): addition for precip
+    #precip_implicit = jnp.zeros_like(state.precip)
+
     return State(
         vorticity=vorticity_implicit,
         divergence=divergence_implicit,
         temperature_variation=temperature_variation_implicit,
         log_surface_pressure=log_surface_pressure_implicit,
+     #   precip=precip_implicit,
         tracers=tracers_implicit,
         sim_time=None if state.sim_time is None else 0.0,
     )

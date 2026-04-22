@@ -128,18 +128,29 @@ def isothermal_rest_atmosphere(
                     jnp.sin(k * (lon - lon0)))
     return surface_pressure + p1 * perturbation
 
+  ## NOTE(ereastin): my additions
+  # so surface_pressure is non-dim?
+  def _get_vapor_tracers(arr):
+      return jnp.zeros_like(arr) + 3e-6
+  ## NOTE(ereastin): my additions
+
   def random_state_fn(rng_key: jnp.ndarray) -> primitive_equations.State:
     nodal_vorticity = jnp.stack(
-        [_get_vorticity(sigma, lon, lat) for sigma in coords.vertical.centers])
+        [_get_vorticity(sigma, lon, lat) for sigma in coords.vertical.centers]
+    )
     modal_vorticity = coords.horizontal.to_modal(nodal_vorticity)
     nodal_surface_pressure = _get_surface_pressure(lon, lat, rng_key)
+    nodal_vapor_tracers = _get_vapor_tracers(jnp.full_like(nodal_vorticity, tref))
     return primitive_equations.State(
         vorticity=modal_vorticity,
         divergence=jnp.zeros_like(modal_vorticity),
         temperature_variation=jnp.zeros_like(modal_vorticity),
         log_surface_pressure=(
-            coords.horizontal.to_modal(jnp.log(nodal_surface_pressure))),
-        )
+            coords.horizontal.to_modal(jnp.log(nodal_surface_pressure))
+        ),
+        #precip=coords.horizontal.to_modal(jnp.zeros_like(nodal_surface_pressure)),
+        tracers={'qv': coords.horizontal.to_modal(_get_vapor_tracers(nodal_vorticity))},
+    ), nodal_surface_pressure  # this is addition for debugging
 
   aux_features = {
       xarray_utils.OROGRAPHY: orography,

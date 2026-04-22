@@ -69,7 +69,8 @@ def _evaluate_rhombus(n_l: int,
 
 def evaluate(n_m: int,
              n_l: int,
-             x: np.ndarray) -> np.ndarray:
+             x: np.ndarray,
+             truncation: str = 'rhombus') -> np.ndarray:
   """Associated Legendre Function.
 
   Evaluates the associated Legendre functions on the nodes x.
@@ -78,6 +79,7 @@ def evaluate(n_m: int,
     n_m: number of m (azimuthal wavenumber) modes. Must satisfy `n_m <= n_l`
     n_l: number of l (total wavenumber) modes.
     x: vector of nodes.
+    truncation: 'rhombus' or 'triangle'. See _evaluate_rhombus(). 'rhombus' fixes round-trip failure for FastSphericalHarmonic
 
   Returns:
     Array p of shape (n_m, len(x), n_l) such that
@@ -93,7 +95,9 @@ def evaluate(n_m: int,
   if n_m > n_l:
     raise ValueError(f'Expected n_m <= n_l; got n_m = {n_m} and n_l = {n_l}.')
   r = np.transpose(
-      _evaluate_rhombus(n_l=n_l, n_m=n_m, x=x, truncation='triangle'),
+      #_evaluate_rhombus(n_l=n_l, n_m=n_m, x=x, truncation='triangle'),  # original
+      # NOTE(ereastin): rhombus truncation solves all probs with bad nodal->modal->nodal round trip reconst for T* models
+      _evaluate_rhombus(n_l=n_l, n_m=n_m, x=x, truncation=truncation),
       (1, 2, 0))
   p = np.zeros((n_m, len(x), n_l))
   for m in range(n_m):

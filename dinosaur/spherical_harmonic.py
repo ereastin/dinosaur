@@ -175,6 +175,7 @@ class RealSphericalHarmonics(SphericalHarmonics):
   but no guaranteed stable representation, use FastSphericalHarmonics, which
   also supports parallelism.
   """
+  truncation: str = 'triangle'
 
   @functools.cached_property
   def nodal_axes(self) -> tuple[np.ndarray, np.ndarray]:
@@ -249,7 +250,7 @@ class RealSphericalHarmonics(SphericalHarmonics):
     x, wp = get_latitude_nodes(self.latitude_nodes, self.latitude_spacing)
     w = wf * wp
     p = associated_legendre.evaluate(
-        n_m=self.longitude_wavenumbers, n_l=self.total_wavenumbers, x=x
+        n_m=self.longitude_wavenumbers, n_l=self.total_wavenumbers, x=x, truncation=self.truncation
     )
     # Each associated Legendre polynomial Pᵐₗ with m > 0 is paired with both
     # the sin and cos components of the Fourier basis. As a result, we have to
@@ -274,10 +275,13 @@ class RealSphericalHarmonics(SphericalHarmonics):
     f = self.basis.f
     p = self.basis.p
     wx = w * x
+    print(f'transform pre-fwd_fourier {wx.shape}')
     fwx = jax.named_call(einsum, name='fwd_fourier')('im,...ij->...mj', f, wx)
+    print(f'transform pre-fwd_legendre {fwx.shape}')
     pfwx = jax.named_call(einsum, name='fwd_legendre')(
         'mjl,...mj->...ml', p, fwx
     )
+    print(f'transform post-fwd_legendre {pfwx.shape}')
     return pfwx
 
   def longitudinal_derivative(self, x: Array) -> Array:
@@ -425,6 +429,7 @@ class FastSphericalHarmonics(SphericalHarmonics):
   reverse_einsum_arg_order: bool | None = None
   stacked_fourier_transforms: bool | None = None
   transform_precision: str = 'tensorfloat32'
+  truncation: str = 'rhombus'  # NOTE(ereastin): ig can add this to base SphericalHarmonics class? then need adjust in post_init.?
 
   def __post_init__(self):
     model_parallelism = self.spmd_mesh is not None and any(
@@ -540,6 +545,7 @@ class FastSphericalHarmonics(SphericalHarmonics):
     #
     #   f.shape == (longitude_nodes, 2*longitude_wavenumbers)
     #   p.shape == (2*longitude_wavenumbers, latitude_nodes, total_wavenumbers)
+    ## NOTE: above expected p.shape isnt correct? shows (longitude_wavenumbers, latitude_nodes, total_wavenumbers)
     nodal_pad_x, nodal_pad_y = self.nodal_padding
     modal_pad_x, modal_pad_y = self.modal_padding
 
@@ -557,8 +563,11 @@ class FastSphericalHarmonics(SphericalHarmonics):
     w = np.pad(w, [(0, nodal_pad_y)])
 
     p = associated_legendre.evaluate(
-        n_m=self.longitude_wavenumbers, n_l=self.total_wavenumbers, x=x
+        n_m=self.longitude_wavenumbers, n_l=self.total_wavenumbers, x=x, truncation=self.truncation
     )
+    # this isn't the shape as expected from above!
+    # seems like this should be OK? 'more efficient bc p-matrix (legendre coeffs) are equiv for +/- vals'
+    # --> can half the size of p-matrix on MXU' (?) this why stacking/unstacking needed.?
     p = np.pad(p, [(0, modal_pad_x // 2), (0, nodal_pad_y), (0, modal_pad_y)])
 
     return _SphericalHarmonicBasis(f=f, p=p, w=w)
@@ -572,6 +581,8 @@ class FastSphericalHarmonics(SphericalHarmonics):
     # TODO(shoyer): consider supporting a "stacked" modal representation with
     # positive & negative values of `m` separated. This would allow for omitting
     # this call to _unstack_m().
+    # NOTE(ereastin): ig im not entirely sure why stacking is ever used.? Real version doesnt use it so why here?
+    # seems like both do lon-fft lat-legendre transforms.?
     x = _unstack_m(x, mesh)
     x = jax.named_call(_transform_einsum, name='inv_legendre')(
         'mjl,...sml->...smj', p, x, mesh, *einsum_args
@@ -621,6 +632,9 @@ class RealSphericalHarmonicsWithZeroImag(FastSphericalHarmonics):
   """Deprecated alias for `FastSphericalHarmonics`."""
 
 
+# TODO: get these to work with sharded trajectories, ndim == 4...
+# FastSphericalHarmonics impl of derivative that takes these outputs 
+# only does 3D
 def _vertical_pad(
     field: jax.Array, mesh: jax.sharding.Mesh | None
 ) -> tuple[jax.Array, int | None]:
@@ -1146,6 +1160,7 @@ class Grid:
     return einsum('y,...xy->...', w, z)
 
 
+#NOTE(ereastin): this is never used..? what is this for?
 # In the spectral basis, a constant field of ones has this value in entry
 # [0, 0]. This is a consequence of the way we normalize Legendre polynomials.
 _CONSTANT_NORMALIZATION_FACTOR = 3.5449077
